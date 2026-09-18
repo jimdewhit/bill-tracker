@@ -1,0 +1,10 @@
+@import "tailwindcss";
+
+/* The header shrinks/grows on scroll (see AppInner) — without this, the
+   browser's scroll anchoring compensates for that self-induced layout
+   shift by nudging scrollY, which can cross right back over the shrink
+   threshold and loop. Nothing on this page needs anchoring anyway (no
+   async-loading content pushing things around). */
+html {
+  overflow-anchor: none;
+}

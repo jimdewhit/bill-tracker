@@ -1,0 +1,91 @@
+{
+  "name": "bill-tracker",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "main": "electron/main.cjs",
+  "homepage": "https://localhost/bill-tracker",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "electron:dev": "concurrently -k \"vite\" \"wait-on tcp:5173 && electron .\"",
+    "dist:win": "vite build && electron-builder --win nsis && electron-builder --win portable --config.artifactName=\"Bill Tracker Portable.exe\" && electron-builder --win portable --config.extraMetadata.portableMode=self-contained --config.artifactName=\"Bill Tracker Self-Contained.exe\"",
+    "dist:linux": "vite build && electron-builder --linux",
+    "dist:mac": "vite build && electron-builder --mac",
+    "android:sync": "vite build && npx cap sync android",
+    "android:open": "npx cap open android",
+    "dist:android": "vite build && npx cap sync android && cd android && set JAVA_HOME=C:\\Program Files\\Android\\Android Studio\\jbr&& gradlew.bat assembleDebug"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.5.0",
+    "@capacitor/core": "^8.5.0",
+    "lucide-react": "^0.454.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "recharts": "^2.12.7"
+  },
+  "devDependencies": {
+    "@capacitor/assets": "^3.0.5",
+    "@capacitor/cli": "^8.5.0",
+    "@tailwindcss/vite": "^4.3.3",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.0",
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8",
+    "png-to-ico": "^3.0.2",
+    "png2icons": "^2.0.1",
+    "sharp": "^0.35.3",
+    "tailwindcss": "^4.3.3",
+    "vite": "^5.4.11",
+    "wait-on": "^8.0.1"
+  },
+  "build": {
+    "appId": "com.billtracker.app",
+    "productName": "Bill Tracker",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "build/icon.png",
+      "package.json",
+      "!node_modules/**/*"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": "build/icon.ico",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "linux": {
+      "target": [
+        "deb",
+        "tar.gz"
+      ],
+      "icon": "build/icons/512x512.png",
+      "category": "Office",
+      "maintainer": "Bill Tracker <noreply@localhost>"
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "icon": "build/icon.icns",
+      "category": "public.app-category.finance"
+    }
+  },
+  "allowScripts": {
+    "electron@33.4.11": true,
+    "esbuild@0.21.5": true,
+    "sharp@0.32.6": true
+  }
+}

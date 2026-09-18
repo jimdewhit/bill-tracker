@@ -1,0 +1,17 @@
+services:
+  bill-tracker:
+    build:
+      context: .
+      args:
+        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL}
+        VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY}
+    ports:
+      - "8080:80"
+    environment:
+      BASIC_AUTH_USER: ${BASIC_AUTH_USER}
+      BASIC_AUTH_PASS: ${BASIC_AUTH_PASS}
+    volumes:
+      # Bind-mounted (not COPYed into the image) so dropping a new installer
+      # here shows up in the Downloads tab immediately — no rebuild needed.
+      - ./downloads:/usr/share/nginx/html/downloads:ro
+    restart: unless-stopped

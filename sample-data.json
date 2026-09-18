@@ -1,0 +1,41 @@
+{
+  "paycheck": {
+    "firstPayDate": "2026-08-14",
+    "paySchedule": { "type": "biweekly", "customDays": [1, 15] },
+    "bufferDays": 0,
+    "numPeriods": 26,
+    "payChanges": [
+      { "date": "2026-08-14", "grossPay": 2400, "netPay": 1850 }
+    ],
+    "startingChecking": 3200,
+    "lowBalanceThreshold": 500,
+    "actualOverrides": {},
+    "extraIncome": {},
+    "netPayOverrides": {},
+    "grossPayOverrides": {},
+    "ytdSeed": { "year": 2026, "gross": 0, "net": 0 }
+  },
+  "savingsAccounts": [
+    { "id": "acct-emergency", "name": "Emergency Fund", "startingBalance": 5000, "actualOverrides": {} },
+    { "id": "acct-vacation", "name": "Vacation Fund", "startingBalance": 800, "actualOverrides": {} }
+  ],
+  "categories": [
+    "Rent/Mortgage", "Vehicle payment", "Insurance", "Loans", "Credit Cards",
+    "Subscriptions", "Transportation", "Entertainment", "Utilities", "Groceries", "Misc"
+  ],
+  "bills": [
+    { "id": "bill-rent", "name": "Rent", "scheduleType": 1, "targetDay": 1, "startDate": "2025-01-01", "endDate": null, "oddEven": 1, "weeks": 4, "amountType": "fixed", "amount": 1450, "pct": 0, "account": null, "category": "Rent/Mortgage", "periodOverrides": {}, "autoPay": false },
+    { "id": "bill-car-payment", "name": "Car Payment", "scheduleType": 1, "targetDay": 15, "startDate": "2025-01-01", "endDate": null, "oddEven": 1, "weeks": 4, "amountType": "fixed", "amount": 385, "pct": 0, "account": null, "category": "Vehicle payment", "periodOverrides": {}, "autoPay": true },
+    { "id": "bill-auto-insurance", "name": "Auto Insurance", "scheduleType": 4, "targetDay": 5, "startDate": "2025-01-05", "endDate": null, "oddEven": 1, "weeks": 4, "amountType": "fixed", "amount": 540, "pct": 0, "account": null, "category": "Insurance", "periodOverrides": {}, "autoPay": true },
+    { "id": "bill-life-insurance", "name": "Life Insurance", "scheduleType": 5, "targetDay": 1, "startDate": "2025-03-01", "endDate": null, "oddEven": 1, "weeks": 4, "amountType": "fixed", "amount": 620, "pct": 0, "account": null, "category": "Insurance", "periodOverrides": {}, "autoPay": true },
+    { "id": "bill-student-loan", "name": "Student Loan", "scheduleType": 1, "targetDay": 20, "startDate": "2025-01-01", "endDate": null, "oddEven": 1, "weeks": 4, "amountType": "fixed", "amount": 210, "pct": 0, "account": null, "category": "Loans", "periodOverrides": {}, "autoPay": true },
+    { "id": "bill-personal-loan", "name": "Personal Loan", "scheduleType": 1, "targetDay": 10, "startDate": "2025-01-01", "endDate": "2026-12-10", "oddEven": 1, "weeks": 4, "amountType": "fixed", "amount": 175, "pct": 0, "account": null, "category": "Loans", "periodOverrides": {}, "autoPay": true },
+    { "id": "bill-credit-card", "name": "Credit Card", "scheduleType": 1, "targetDay": 25, "startDate": "2025-01-01", "endDate": null, "oddEven": 1, "weeks": 4, "amountType": "fixed", "amount": 150, "pct": 0, "account": null, "category": "Credit Cards", "periodOverrides": {}, "autoPay": false },
+    { "id": "bill-streaming", "name": "Streaming Service", "scheduleType": 1, "targetDay": 8, "startDate": "2025-01-01", "endDate": null, "oddEven": 1, "weeks": 4, "amountType": "fixed", "amount": 15.99, "pct": 0, "account": null, "category": "Subscriptions", "periodOverrides": {}, "autoPay": true },
+    { "id": "bill-gym", "name": "Gym Membership", "scheduleType": 1, "targetDay": 3, "startDate": "2025-01-01", "endDate": null, "oddEven": 1, "weeks": 4, "amountType": "fixed", "amount": 45, "pct": 0, "account": null, "category": "Subscriptions", "periodOverrides": {}, "autoPay": true },
+    { "id": "bill-electric", "name": "Electric Utility", "scheduleType": 3, "targetDay": 0, "startDate": "2025-01-06", "endDate": null, "oddEven": 1, "weeks": 4, "amountType": "fixed", "amount": 140, "pct": 0, "account": null, "category": "Utilities", "periodOverrides": {}, "autoPay": false },
+    { "id": "bill-pest-control", "name": "Pest Control", "scheduleType": 2, "targetDay": 12, "startDate": "2025-01-01", "endDate": null, "oddEven": 1, "weeks": 4, "amountType": "fixed", "amount": 85, "pct": 0, "account": null, "category": "Misc", "periodOverrides": {}, "autoPay": false },
+    { "id": "bill-emergency-fund", "name": "Emergency Fund Contribution", "scheduleType": 0, "targetDay": 0, "startDate": "2025-01-01", "endDate": null, "oddEven": 1, "weeks": 4, "amountType": "fixed", "amount": 100, "pct": 0, "account": "acct-emergency", "category": "Misc", "periodOverrides": {}, "autoPay": true },
+    { "id": "bill-vacation-fund", "name": "Vacation Fund Contribution", "scheduleType": 0, "targetDay": 0, "startDate": "2025-01-01", "endDate": null, "oddEven": 1, "weeks": 4, "amountType": "fixed", "amount": 50, "pct": 0, "account": "acct-vacation", "category": "Misc", "periodOverrides": {}, "autoPay": true }
+  ]
+}

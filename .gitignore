@@ -1,0 +1,23 @@
+node_modules/
+dist/
+build/
+release/
+
+# env / secrets
+.env
+.env.*
+!.env.example
+
+# android build artifacts
+android/.gradle/
+android/app/build/
+android/build/
+android/capacitor-cordova-android-plugins/build/
+android/local.properties
+*.keystore
+*.jks
+
+# logs / OS
+*.log
+.DS_Store
+Thumbs.db
