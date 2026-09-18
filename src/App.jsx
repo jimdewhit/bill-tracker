@@ -12,7 +12,7 @@ import {
 import { isSyncConfigured, pushBlob, pullBlob } from "./supabaseSync.js";
 import {
   getSession, onAuthStateChange, signUpWithPassword, signInWithPassword,
-  sendLoginCode, verifyLoginCode, signOut as authSignOut,
+  sendLoginCode, verifyLoginCode, verifySignupCode, signOut as authSignOut,
 } from "./supabaseAuth.js";
 
 // Only ever set by the Docker build (see Dockerfile) — gates the
@@ -880,6 +880,7 @@ function AccountSection({ syncConfigured, session, syncState, lastSyncedAt, sync
   const [showPassword, setShowPassword] = useState(false);
   const [codeDraft, setCodeDraft] = useState("");
   const [codeSent, setCodeSent] = useState(false);
+  const [signupPending, setSignupPending] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState(null);
@@ -904,8 +905,23 @@ function AccountSection({ syncConfigured, session, syncState, lastSyncedAt, sync
     const res = await signUpWithPassword(email.trim(), password);
     setBusy(false);
     if (!res.ok) { setError(res.error); return; }
+    if (res.needsEmailConfirmation) {
+      setSignupPending(true);
+      setNotice("Code sent — check your email to confirm your account.");
+    } else {
+      setPassword("");
+    }
+  };
+
+  const handleVerifySignupCode = async () => {
+    setBusy(true); setError(null);
+    const res = await verifySignupCode(email.trim(), codeDraft.trim());
+    setBusy(false);
+    if (!res.ok) { setError(res.error); return; }
+    setCodeDraft("");
+    setSignupPending(false);
     setPassword("");
-    if (res.needsEmailConfirmation) setNotice("Check your email to confirm your account, then sign in.");
+    setNotice(null);
   };
 
   const handleSendCode = async () => {
@@ -968,6 +984,28 @@ function AccountSection({ syncConfigured, session, syncState, lastSyncedAt, sync
             ) : (
               <button onClick={() => setConfirmSignOut(true)} className="text-[13px] font-medium" style={{ color: t.rust }}>Sign out</button>
             )}
+          </div>
+        </div>
+      ) : signupPending ? (
+        <div className="space-y-3">
+          <p className="text-[13px]" style={{ color: t.ink }}>
+            Confirming <span className="font-medium">{email}</span>
+          </p>
+          <div className="flex flex-wrap items-end gap-3">
+            <Field label="6-digit code" className="w-32">
+              <TextInput value={codeDraft} onChange={(e) => setCodeDraft(e.target.value)} placeholder="123456" />
+            </Field>
+            <button disabled={busy || !codeDraft} onClick={handleVerifySignupCode} className={btnPrimary} style={btnPrimaryStyle}>
+              Confirm
+            </button>
+            <button onClick={handleSignUp} className="text-[13px]" style={{ color: t.inkSoft }}>Resend code</button>
+            <button
+              onClick={() => { setSignupPending(false); setCodeDraft(""); setPassword(""); setError(null); setNotice(null); }}
+              className="text-[13px]"
+              style={{ color: t.inkSoft }}
+            >
+              Cancel
+            </button>
           </div>
         </div>
       ) : (

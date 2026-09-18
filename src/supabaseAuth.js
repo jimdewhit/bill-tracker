@@ -21,8 +21,19 @@ export async function signUpWithPassword(email, password) {
   const { data, error } = await supabase.auth.signUp({ email, password });
   if (error) return { ok: false, error: error.message };
   // With "Confirm email" enabled in the Supabase project (the default), sign-up
-  // doesn't return a session until the user clicks the confirmation link.
+  // doesn't return a session until the confirmation code below is verified.
   return { ok: true, needsEmailConfirmation: !data.session };
+}
+
+// Verifies the 6-digit code from the "Confirm signup" email — the password
+// equivalent of verifyLoginCode below, needed because that email's template
+// was pointed at {{ .Token }} instead of a clickable {{ .ConfirmationURL }}
+// link, for the same cross-shell reason described on sendLoginCode.
+export async function verifySignupCode(email, token) {
+  if (!supabase) return { ok: false, error: "not-configured" };
+  const { error } = await supabase.auth.verifyOtp({ email, token, type: "signup" });
+  if (error) return { ok: false, error: error.message };
+  return { ok: true };
 }
 
 export async function signInWithPassword(email, password) {
