@@ -1,0 +1,30 @@
+# Custom-install compose file for CasaOS — pulls the pre-built image instead
+# of building from source (CasaOS's Custom Install just runs `docker compose
+# up`, it doesn't hand it this repo's build context).
+#
+# Getting the image onto the CasaOS host, either:
+#   1. Public/authenticated pull: `docker login ghcr.io` once on the CasaOS
+#      host (the package is private), then let this file pull it normally.
+#   2. No registry auth at all: copy release/bill-tracker-docker.tar.gz to
+#      the host and run `docker load -i bill-tracker-docker.tar.gz` — it
+#      restores the image under this same name, so this file works unchanged.
+#
+# Before deploying: change BASIC_AUTH_PASS below, and set AUTH_MODE to "none"
+# only once the app's own Supabase Auth sign-in (Settings tab) is set up as
+# the login gate instead — otherwise this deployment has no login gate at all.
+services:
+  bill-tracker:
+    image: ghcr.io/jimdewhit/bill-tracker:latest
+    container_name: bill-tracker
+    ports:
+      - "8080:80"
+    environment:
+      AUTH_MODE: basic
+      BASIC_AUTH_USER: admin
+      BASIC_AUTH_PASS: admin
+    volumes:
+      # Backs the Downloads tab. Point this at wherever CasaOS should keep
+      # this app's data — create the folder on the host first if it doesn't
+      # already exist.
+      - /DATA/AppData/bill-tracker/downloads:/usr/share/nginx/html/downloads:ro
+    restart: unless-stopped
