@@ -3,13 +3,17 @@ import { createPortal } from "react-dom";
 import {
   Plus, Trash2, ChevronDown, ChevronRight, PiggyBank, Wallet,
   AlertTriangle, Calendar, Settings2, Settings, Receipt, TrendingUp, Save, Check, X, RotateCcw, Sun, Moon,
-  Download, Upload, FileSpreadsheet, Cloud, CloudOff, RefreshCw, Copy, Eye, EyeOff, Repeat, Bell,
+  Download, Upload, FileSpreadsheet, Cloud, CloudOff, RefreshCw, Eye, EyeOff, Repeat, Bell,
   Monitor, Laptop, Smartphone
 } from "lucide-react";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine
 } from "recharts";
-import { isSyncConfigured, pushBlob, pullBlob, generateSyncKey, looksLikeSyncKey } from "./supabaseSync.js";
+import { isSyncConfigured, pushBlob, pullBlob } from "./supabaseSync.js";
+import {
+  getSession, onAuthStateChange, signUpWithPassword, signInWithPassword,
+  sendLoginCode, verifyLoginCode, signOut as authSignOut,
+} from "./supabaseAuth.js";
 
 // Only ever set by the Docker build (see Dockerfile) — gates the
 // Docker-only Downloads tab so it never shows up in the Electron/Capacitor
@@ -530,7 +534,6 @@ function useDarkMode() {
    STORAGE
 ============================================================================ */
 const STORAGE_KEY = "bill-tracker:data:v1";
-const SYNC_KEY_STORAGE = "bill-tracker:sync-key:v1";
 
 /* Older saved blobs may predate categories, per-account actual overrides,
    or per-bill period overrides — patch in sane defaults so loading old data
@@ -568,32 +571,26 @@ function useStorageState() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saveState, setSaveState] = useState("idle"); // idle | saving | saved | error
-  const [syncKey, setSyncKeyState] = useState(null);
+  const [session, setSession] = useState(null);
   const [syncState, setSyncState] = useState("idle"); // idle | syncing | synced | error
   const [lastSyncedAt, setLastSyncedAt] = useState(null);
   const saveTimer = useRef(null);
-  // Mirrors syncKey/data for closures that are created once (the debounced
+  // Mirrors session/data for closures that are created once (the debounced
   // setTimeout in persist, the visibility/focus listeners below) — without
-  // these, those closures would keep whatever syncKey/data existed at the
+  // these, those closures would keep whatever session/data existed at the
   // moment they were created, forever, the same reason saveTimer is a ref.
-  const syncKeyRef = useRef(null);
+  const sessionRef = useRef(null);
   const dataRef = useRef(null);
   useEffect(() => {
     dataRef.current = data;
   }, [data]);
 
-  const setSyncKey = useCallback((key) => {
-    syncKeyRef.current = key;
-    setSyncKeyState(key);
-    window.storage.set(SYNC_KEY_STORAGE, key || "", false).catch(() => {});
-  }, []);
-
-  // Adopt cloud data (or seed the cloud if no row exists yet) for a given
-  // key. Shared by load-time auto-pull, "Join", "Start syncing", and "Sync now".
-  const syncFromCloud = useCallback(async (key, localSnapshot) => {
-    if (!isSyncConfigured || !key) return;
+  // Adopt cloud data (or seed the cloud if no row exists yet) for the signed-in
+  // account. Shared by load-time auto-pull, sign-in, and "Sync now".
+  const syncFromCloud = useCallback(async (userId, localSnapshot) => {
+    if (!isSyncConfigured || !userId) return;
     setSyncState("syncing");
-    const res = await pullBlob(key);
+    const res = await pullBlob(userId);
     if (!res.ok) {
       setSyncState("error");
       return;
@@ -605,7 +602,7 @@ function useStorageState() {
       setSyncState("synced");
       setLastSyncedAt(new Date().toISOString());
     } else {
-      const seed = await pushBlob(key, localSnapshot);
+      const seed = await pushBlob(userId, localSnapshot);
       setSyncState(seed.ok ? "synced" : "error");
       if (seed.ok) setLastSyncedAt(new Date().toISOString());
     }
@@ -623,18 +620,30 @@ function useStorageState() {
       setData(local);
       setLoading(false);
 
-      try {
-        const keyRes = await window.storage.get(SYNC_KEY_STORAGE, false);
-        const key = keyRes && keyRes.value ? keyRes.value : null;
-        if (key) {
-          syncKeyRef.current = key;
-          setSyncKeyState(key);
-          syncFromCloud(key, local); // fire-and-forget; doesn't block rendering
-        }
-      } catch (e) {
-        // no sync key saved — sync stays off
-      }
+      if (!isSyncConfigured) return;
+      const initialSession = await getSession();
+      sessionRef.current = initialSession;
+      setSession(initialSession);
+      if (initialSession) syncFromCloud(initialSession.user.id, local); // fire-and-forget; doesn't block rendering
     })();
+  }, [syncFromCloud]);
+
+  // Reacts to sign-in/sign-up/sign-out triggered from the Settings tab.
+  // INITIAL_SESSION is skipped because the mount effect above already handled
+  // startup, using the freshly-loaded local snapshot to seed the cloud with.
+  useEffect(() => {
+    const subscription = onAuthStateChange((event, newSession) => {
+      if (event === "INITIAL_SESSION") return;
+      sessionRef.current = newSession;
+      setSession(newSession);
+      if (event === "SIGNED_IN" && newSession) {
+        syncFromCloud(newSession.user.id, dataRef.current);
+      } else if (event === "SIGNED_OUT") {
+        setSyncState("idle");
+        setLastSyncedAt(null);
+      }
+    });
+    return () => subscription.unsubscribe();
   }, [syncFromCloud]);
 
   // Auto-pull on load covers app *startup*, but an already-open app (the
@@ -647,7 +656,7 @@ function useStorageState() {
   useEffect(() => {
     const onFocusOrVisible = () => {
       if (document.visibilityState === "hidden") return;
-      if (syncKeyRef.current) syncFromCloud(syncKeyRef.current, dataRef.current);
+      if (sessionRef.current) syncFromCloud(sessionRef.current.user.id, dataRef.current);
     };
     window.addEventListener("focus", onFocusOrVisible);
     document.addEventListener("visibilitychange", onFocusOrVisible);
@@ -657,7 +666,9 @@ function useStorageState() {
     };
   }, [syncFromCloud]);
 
-  const persist = useCallback((next) => {
+  // skipCloudPush lets resetToSeed wipe the local copy without also
+  // overwriting the signed-in account's cloud copy — see resetToSeed below.
+  const persist = useCallback((next, { skipCloudPush = false } = {}) => {
     setData(next);
     setSaveState("saving");
     if (saveTimer.current) clearTimeout(saveTimer.current);
@@ -668,10 +679,10 @@ function useStorageState() {
       } catch (e) {
         setSaveState("error");
       }
-      const key = syncKeyRef.current;
-      if (isSyncConfigured && key) {
+      const s = sessionRef.current;
+      if (isSyncConfigured && s && !skipCloudPush) {
         setSyncState("syncing");
-        const res = await pushBlob(key, next);
+        const res = await pushBlob(s.user.id, next);
         setSyncState(res.ok ? "synced" : "error");
         if (res.ok) setLastSyncedAt(new Date().toISOString());
       }
@@ -679,42 +690,20 @@ function useStorageState() {
   }, []);
 
   const resetToSeed = useCallback(() => {
-    // Unpair before wiping local data, never after — otherwise the debounced
-    // push below would propagate this reset to any other paired device.
-    setSyncKey(null);
+    // Skip the cloud push — a local reset shouldn't silently overwrite the
+    // signed-in account's synced data. Sign out first for that.
     setSyncState("idle");
     setLastSyncedAt(null);
-    persist(DEFAULT_DATA);
-  }, [persist, setSyncKey]);
+    persist(DEFAULT_DATA, { skipCloudPush: true });
+  }, [persist]);
 
   const syncNow = useCallback(() => {
-    if (syncKeyRef.current) syncFromCloud(syncKeyRef.current, data);
+    if (sessionRef.current) syncFromCloud(sessionRef.current.user.id, data);
   }, [syncFromCloud, data]);
-
-  const startSyncing = useCallback(() => {
-    const key = generateSyncKey();
-    setSyncKey(key);
-    syncFromCloud(key, data); // no cloud row yet → this seeds it
-  }, [setSyncKey, syncFromCloud, data]);
-
-  const joinSyncKey = useCallback((pastedKey) => {
-    const key = (pastedKey || "").trim();
-    if (!looksLikeSyncKey(key)) return { ok: false, error: "That doesn't look like a valid Sync Key." };
-    setSyncKey(key);
-    syncFromCloud(key, data);
-    return { ok: true };
-  }, [setSyncKey, syncFromCloud, data]);
-
-  const stopSyncing = useCallback(() => {
-    setSyncKey(null);
-    setSyncState("idle");
-    setLastSyncedAt(null);
-  }, [setSyncKey]);
 
   return {
     data, setData: persist, loading, saveState, resetToSeed,
-    syncConfigured: isSyncConfigured, syncKey, syncState, lastSyncedAt,
-    startSyncing, joinSyncKey, stopSyncing, syncNow,
+    syncConfigured: isSyncConfigured, session, syncState, lastSyncedAt, syncNow,
   };
 }
 
@@ -875,6 +864,174 @@ function SyncIndicator({ state, lastSyncedAt }) {
       </span>
     );
   return <span className="text-[12px] text-transparent">·</span>;
+}
+
+/* ============================================================================
+   ACCOUNT (Supabase Auth sign-in gating cloud sync)
+============================================================================ */
+function AccountSection({ syncConfigured, session, syncState, lastSyncedAt, syncNow }) {
+  const t = useTheme();
+  const card = "rounded-lg p-5 shadow-sm space-y-4";
+  const cardStyle = { background: t.cardBg, border: `1px solid ${t.ruleSoft}` };
+
+  const [authMode, setAuthMode] = useState("password"); // password | code
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [codeDraft, setCodeDraft] = useState("");
+  const [codeSent, setCodeSent] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const [notice, setNotice] = useState(null);
+  const [confirmSignOut, setConfirmSignOut] = useState(false);
+
+  const switchMode = (mode) => {
+    setAuthMode(mode);
+    setError(null);
+    setNotice(null);
+  };
+
+  const handleSignIn = async () => {
+    setBusy(true); setError(null); setNotice(null);
+    const res = await signInWithPassword(email.trim(), password);
+    setBusy(false);
+    if (!res.ok) { setError(res.error); return; }
+    setPassword("");
+  };
+
+  const handleSignUp = async () => {
+    setBusy(true); setError(null); setNotice(null);
+    const res = await signUpWithPassword(email.trim(), password);
+    setBusy(false);
+    if (!res.ok) { setError(res.error); return; }
+    setPassword("");
+    if (res.needsEmailConfirmation) setNotice("Check your email to confirm your account, then sign in.");
+  };
+
+  const handleSendCode = async () => {
+    setBusy(true); setError(null); setNotice(null);
+    const res = await sendLoginCode(email.trim());
+    setBusy(false);
+    if (!res.ok) { setError(res.error); return; }
+    setCodeSent(true);
+    setNotice("Code sent — check your email.");
+  };
+
+  const handleVerifyCode = async () => {
+    setBusy(true); setError(null);
+    const res = await verifyLoginCode(email.trim(), codeDraft.trim());
+    setBusy(false);
+    if (!res.ok) { setError(res.error); return; }
+    setCodeDraft("");
+    setCodeSent(false);
+    setNotice(null);
+  };
+
+  const handleSignOut = async () => {
+    await authSignOut();
+    setConfirmSignOut(false);
+  };
+
+  const btnPrimary = "flex items-center gap-1.5 px-3.5 py-1.5 rounded-md text-[14px] font-medium transition-colors disabled:opacity-50";
+  const btnPrimaryStyle = { background: t.ink, color: t.pageBg };
+
+  return (
+    <section className={card} style={cardStyle}>
+      <h3 className="flex items-center gap-2 font-serif text-[17px]" style={{ color: t.ink }}><Cloud size={16} /> Account</h3>
+      <p className="text-[12px] -mt-1" style={{ color: t.inkSoft }}>
+        Optional — sign in to keep this data in sync across your own devices.
+      </p>
+      {!syncConfigured ? (
+        <p className="text-[12px] italic" style={{ color: t.inkSoft }}>Cloud sync isn't set up in this build.</p>
+      ) : session ? (
+        <div className="space-y-3">
+          <p className="text-[13px]" style={{ color: t.ink }}>
+            Signed in as <span className="font-medium">{session.user.email}</span>
+          </p>
+          <div className="flex flex-wrap items-center gap-4">
+            <button
+              onClick={syncNow}
+              className={btnPrimary}
+              style={btnPrimaryStyle}
+              onMouseEnter={(e) => (e.currentTarget.style.background = t.btnBgHover)}
+              onMouseLeave={(e) => (e.currentTarget.style.background = t.ink)}
+            >
+              <RefreshCw size={14} /> Sync now
+            </button>
+            <SyncIndicator state={syncState} lastSyncedAt={lastSyncedAt} />
+            {confirmSignOut ? (
+              <div className="flex items-center gap-1.5 text-[13px]">
+                <span style={{ color: t.inkSoft }}>Sign out?</span>
+                <button onClick={handleSignOut} className="font-medium hover:underline" style={{ color: t.rust }}>Yes</button>
+                <button onClick={() => setConfirmSignOut(false)} className="hover:underline" style={{ color: t.inkSoft }}>Cancel</button>
+              </div>
+            ) : (
+              <button onClick={() => setConfirmSignOut(true)} className="text-[13px] font-medium" style={{ color: t.rust }}>Sign out</button>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <div className="flex gap-4 text-[12px]">
+            <button onClick={() => switchMode("password")} className={authMode === "password" ? "font-semibold" : ""} style={{ color: authMode === "password" ? t.ink : t.inkSoft }}>
+              Password
+            </button>
+            <button onClick={() => switchMode("code")} className={authMode === "code" ? "font-semibold" : ""} style={{ color: authMode === "code" ? t.ink : t.inkSoft }}>
+              Email code
+            </button>
+          </div>
+          <div className="flex flex-wrap items-end gap-3">
+            <Field label="Email" className="w-64">
+              <TextInput type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" />
+            </Field>
+            {authMode === "password" && (
+              <Field label="Password" className="w-64">
+                <div className="relative">
+                  <TextInput type={showPassword ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)} className="pr-8" />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((s) => !s)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2"
+                    style={{ color: t.inkSoft }}
+                  >
+                    {showPassword ? <EyeOff size={14} /> : <Eye size={14} />}
+                  </button>
+                </div>
+              </Field>
+            )}
+          </div>
+          {authMode === "password" ? (
+            <div className="flex flex-wrap items-center gap-4">
+              <button disabled={busy || !email || !password} onClick={handleSignIn} className={btnPrimary} style={btnPrimaryStyle}>
+                Sign in
+              </button>
+              <button disabled={busy || !email || !password} onClick={handleSignUp} className="text-[13px] font-medium disabled:opacity-50" style={{ color: t.green }}>
+                Create account
+              </button>
+            </div>
+          ) : !codeSent ? (
+            <div className="flex flex-wrap items-center gap-4">
+              <button disabled={busy || !email} onClick={handleSendCode} className={btnPrimary} style={btnPrimaryStyle}>
+                Send code
+              </button>
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-end gap-3">
+              <Field label="6-digit code" className="w-32">
+                <TextInput value={codeDraft} onChange={(e) => setCodeDraft(e.target.value)} placeholder="123456" />
+              </Field>
+              <button disabled={busy || !codeDraft} onClick={handleVerifyCode} className={btnPrimary} style={btnPrimaryStyle}>
+                Verify
+              </button>
+              <button onClick={handleSendCode} className="text-[13px]" style={{ color: t.inkSoft }}>Resend code</button>
+            </div>
+          )}
+        </div>
+      )}
+      {notice && <p className="text-[12px]" style={{ color: t.green }}>{notice}</p>}
+      {error && <p className="text-[12px]" style={{ color: t.rust }}>{error}</p>}
+    </section>
+  );
 }
 
 /* ============================================================================
@@ -1512,38 +1669,13 @@ function PaycheckTab({ data, setData }) {
 
 function SettingsTab({
   data, setData, resetToSeed, periods,
-  syncConfigured, syncKey, syncState, lastSyncedAt, startSyncing, joinSyncKey, stopSyncing, syncNow,
+  syncConfigured, session, syncState, lastSyncedAt, syncNow,
 }) {
   const t = useTheme();
   const [confirmReset, setConfirmReset] = useState(false);
   const [pendingImport, setPendingImport] = useState(null);
   const [importError, setImportError] = useState(null);
   const fileInputRef = useRef(null);
-  const [joinDraft, setJoinDraft] = useState("");
-  const [joinError, setJoinError] = useState(null);
-  const [copied, setCopied] = useState(false);
-  const [confirmStop, setConfirmStop] = useState(false);
-  const [showKey, setShowKey] = useState(false);
-
-  const copyKey = async () => {
-    try {
-      await navigator.clipboard.writeText(syncKey);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch (e) {
-      // Clipboard API unavailable — the key is still visible to select manually.
-    }
-  };
-
-  const handleJoin = () => {
-    const res = joinSyncKey(joinDraft);
-    if (!res.ok) {
-      setJoinError(res.error);
-      return;
-    }
-    setJoinError(null);
-    setJoinDraft("");
-  };
 
   const exportData = () => {
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
@@ -1629,7 +1761,11 @@ function SettingsTab({
           <input ref={fileInputRef} type="file" accept="application/json,.json" className="hidden" onChange={handleImportFile} />
           {confirmReset ? (
             <div className="flex items-center gap-1.5 text-[13px]">
-              <span style={{ color: t.inkSoft }}>{syncKey ? "Reset all data? This device will stop syncing (other synced devices keep their data)." : "Reset all data?"}</span>
+              <span style={{ color: t.inkSoft }}>
+                {session
+                  ? "Reset all data on this device? You'll stay signed in, and this won't touch your synced account data — the next sync will bring it back."
+                  : "Reset all data?"}
+              </span>
               <button onClick={() => { resetToSeed(); setConfirmReset(false); }} className="font-medium hover:underline" style={{ color: t.rust }}>Yes</button>
               <button onClick={() => setConfirmReset(false)} className="hover:underline" style={{ color: t.inkSoft }}>Cancel</button>
             </div>
@@ -1642,67 +1778,9 @@ function SettingsTab({
         {importError && <p className="text-[12px]" style={{ color: t.rust }}>{importError}</p>}
       </section>
 
-      <section className={card} style={cardStyle}>
-        <h3 className="flex items-center gap-2 font-serif text-[17px]" style={{ color: t.ink }}><Cloud size={16} /> Sync</h3>
-        <p className="text-[12px] -mt-1" style={{ color: t.inkSoft }}>
-          Optional — keep this data in sync across your own devices using a private Sync Key. Anyone with this key can read and overwrite this data, so treat it like a password.
-        </p>
-        {!syncConfigured ? (
-          <p className="text-[12px] italic" style={{ color: t.inkSoft }}>Cloud sync isn't set up in this build.</p>
-        ) : !syncKey ? (
-          <div className="flex flex-wrap items-end gap-3">
-            <button
-              onClick={startSyncing}
-              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-md text-[14px] font-medium transition-colors"
-              style={{ background: t.ink, color: t.pageBg }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = t.btnBgHover)}
-              onMouseLeave={(e) => (e.currentTarget.style.background = t.ink)}
-            >
-              <Cloud size={14} /> Start syncing
-            </button>
-            <Field label="Or paste a key from another device" className="w-64">
-              <TextInput value={joinDraft} onChange={(e) => setJoinDraft(e.target.value)} placeholder="00000000-0000-4000-8000-000000000000" />
-            </Field>
-            <button onClick={handleJoin} className="text-[13px] font-medium" style={{ color: t.green }}>Join</button>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <code className="text-[12px] px-2 py-1 rounded tracking-wider" style={{ background: t.inputBg, color: t.ink }}>
-                {showKey ? syncKey : "•".repeat(syncKey.length)}
-              </code>
-              <button onClick={() => setShowKey((s) => !s)} className="flex items-center gap-1 text-[12px] font-medium" style={{ color: t.ink }}>
-                {showKey ? <EyeOff size={12} /> : <Eye size={12} />} {showKey ? "Hide" : "Show"}
-              </button>
-              <button onClick={copyKey} className="flex items-center gap-1 text-[12px] font-medium" style={{ color: t.ink }}>
-                <Copy size={12} /> {copied ? "Copied" : "Copy"}
-              </button>
-            </div>
-            <div className="flex flex-wrap items-center gap-4">
-              <button
-                onClick={syncNow}
-                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-md text-[14px] font-medium transition-colors"
-                style={{ background: t.ink, color: t.pageBg }}
-                onMouseEnter={(e) => (e.currentTarget.style.background = t.btnBgHover)}
-                onMouseLeave={(e) => (e.currentTarget.style.background = t.ink)}
-              >
-                <RefreshCw size={14} /> Sync now
-              </button>
-              <SyncIndicator state={syncState} lastSyncedAt={lastSyncedAt} />
-              {confirmStop ? (
-                <div className="flex items-center gap-1.5 text-[13px]">
-                  <span style={{ color: t.inkSoft }}>Stop syncing this device?</span>
-                  <button onClick={() => { stopSyncing(); setConfirmStop(false); setShowKey(false); }} className="font-medium hover:underline" style={{ color: t.rust }}>Yes</button>
-                  <button onClick={() => setConfirmStop(false)} className="hover:underline" style={{ color: t.inkSoft }}>Cancel</button>
-                </div>
-              ) : (
-                <button onClick={() => setConfirmStop(true)} className="text-[13px] font-medium" style={{ color: t.rust }}>Stop syncing</button>
-              )}
-            </div>
-          </div>
-        )}
-        {joinError && <p className="text-[12px]" style={{ color: t.rust }}>{joinError}</p>}
-      </section>
+      <AccountSection
+        syncConfigured={syncConfigured} session={session} syncState={syncState} lastSyncedAt={lastSyncedAt} syncNow={syncNow}
+      />
 
       <section className={card} style={cardStyle}>
         <h3 className="flex items-center gap-2 font-serif text-[17px]" style={{ color: t.ink }}><FileSpreadsheet size={16} /> Year-to-date report</h3>
@@ -2578,7 +2656,7 @@ function HistoryTab({ data, setData, periods, ytd }) {
 function AppInner({ dark, toggleDark }) {
   const {
     data, setData, loading, saveState, resetToSeed,
-    syncConfigured, syncKey, syncState, lastSyncedAt, startSyncing, joinSyncKey, stopSyncing, syncNow,
+    syncConfigured, session, syncState, lastSyncedAt, syncNow,
   } = useStorageState();
   const t = useTheme();
   const [tab, setTab] = useState("projection");
@@ -2711,8 +2789,7 @@ function AppInner({ dark, toggleDark }) {
         {tab === "settings" && (
           <SettingsTab
             data={data} setData={setData} resetToSeed={resetToSeed} periods={periods}
-            syncConfigured={syncConfigured} syncKey={syncKey} syncState={syncState} lastSyncedAt={lastSyncedAt}
-            startSyncing={startSyncing} joinSyncKey={joinSyncKey} stopSyncing={stopSyncing} syncNow={syncNow}
+            syncConfigured={syncConfigured} session={session} syncState={syncState} lastSyncedAt={lastSyncedAt} syncNow={syncNow}
           />
         )}
         {tab === "downloads" && <DownloadsTab />}

@@ -8,6 +8,11 @@ services:
     ports:
       - "8080:80"
     environment:
+      # basic (default) keeps the nginx login prompt that's always been here;
+      # none turns it off — do that only once the app's own Supabase Auth
+      # sign-in (VITE_SUPABASE_URL/VITE_SUPABASE_ANON_KEY, set above) is
+      # configured, or this deployment has no login gate at all.
+      AUTH_MODE: ${AUTH_MODE:-basic}
       BASIC_AUTH_USER: ${BASIC_AUTH_USER}
       BASIC_AUTH_PASS: ${BASIC_AUTH_PASS}
     volumes:
