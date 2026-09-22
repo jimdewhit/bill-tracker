@@ -1214,13 +1214,16 @@ function BillEditor({ bill, savingsAccounts, categories, onChange, onDelete }) {
       </Field>
       {bill.amountType === "fixed" ? (
         <Field label="Amount ($)">
-          <NumInput value={bill.amount} onChange={(e) => onChange({ ...bill, amount: Number(e.target.value) })} />
+          <CurrencyInput value={bill.amount} onChange={(val) => onChange({ ...bill, amount: val })} />
         </Field>
       ) : (
         <Field label="Percent (e.g. 0.05 = 5%)">
           <NumInput step="0.001" value={bill.pct} onChange={(e) => onChange({ ...bill, pct: Number(e.target.value) })} />
         </Field>
       )}
+      <p className="col-span-2 sm:col-span-4 text-[11px] -mt-2" style={{ color: t.inkSoft }}>
+        Changing the amount only affects the current and future pay periods — past periods keep whatever amount was actually charged.
+      </p>
 
       <Field label="Category">
         <SelectInput value={bill.category || "Misc"} onChange={(e) => onChange({ ...bill, category: e.target.value })}>
@@ -1442,8 +1445,40 @@ function BillsTab({ data, setData, periods }) {
     return map;
   }, [periods, data.bills]);
 
+  // Editing a bill's amount (fixed $, or its % / amount-type) would otherwise
+  // retroactively recompute every past occurrence too, since projected
+  // amounts are derived live from the bill's current config. To keep history
+  // intact, any past occurrence that isn't already individually overridden
+  // gets frozen at whatever `periods` (still computed from the pre-edit bill)
+  // shows it was actually charged — before the new amount takes effect for
+  // the current period onward. "Past" here matches Projection's own
+  // current-paycheck cutoff (splitPeriods): the most recently landed
+  // paycheck keeps the new amount, only strictly-earlier ones are frozen.
   const updateBill = (id, updated) => {
-    setData({ ...data, bills: data.bills.map((b) => (b.id === id ? updated : b)) });
+    const original = data.bills.find((b) => b.id === id);
+    const amountChanged =
+      original &&
+      (original.amount !== updated.amount || original.pct !== updated.pct || original.amountType !== updated.amountType);
+
+    let next = updated;
+    if (amountChanged) {
+      const today = todayUTC();
+      const past = periods.filter((p) => p.date <= today);
+      const currentIndex = past.length ? past[past.length - 1].index : null;
+      if (currentIndex !== null) {
+        const overrides = { ...(updated.periodOverrides || {}) };
+        periods.forEach((p) => {
+          if (p.index >= currentIndex) return;
+          if (overrides[p.index] !== undefined) return;
+          const li = p.lineItems.find((x) => x.billId === id && !x.isEarlyPayment);
+          if (!li || li.isOverridden) return;
+          overrides[p.index] = li.amount;
+        });
+        next = { ...updated, periodOverrides: overrides };
+      }
+    }
+
+    setData({ ...data, bills: data.bills.map((b) => (b.id === id ? next : b)) });
   };
   const deleteBill = (id) => {
     setData({ ...data, bills: data.bills.filter((b) => b.id !== id) });
