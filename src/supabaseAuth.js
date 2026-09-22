@@ -25,7 +25,7 @@ export async function signUpWithPassword(email, password) {
   return { ok: true, needsEmailConfirmation: !data.session };
 }
 
-// Verifies the 6-digit code from the "Confirm signup" email — the password
+// Verifies the 8-digit code from the "Confirm signup" email — the password
 // equivalent of verifyLoginCode below, needed because that email's template
 // was pointed at {{ .Token }} instead of a clickable {{ .ConfirmationURL }}
 // link, for the same cross-shell reason described on sendLoginCode.
@@ -43,7 +43,7 @@ export async function signInWithPassword(email, password) {
   return { ok: true };
 }
 
-// Emails a one-time 6-digit code rather than a clickable magic link — a link
+// Emails a one-time 8-digit code rather than a clickable magic link — a link
 // would need to redirect back into this app, which has no single URL: it's a
 // file:// window in Electron, a WebView origin in the Android build, and a
 // real URL only in the Docker/web build. A typed code works identically
@@ -67,4 +67,30 @@ export async function verifyLoginCode(email, token) {
 export async function signOut() {
   if (!supabase) return;
   await supabase.auth.signOut();
+}
+
+// Emails an 8-digit recovery code — same reasoning as sendLoginCode above.
+// Requires the "Reset Password" email template in the Supabase dashboard to
+// include {{ .Token }}.
+export async function sendPasswordResetCode(email) {
+  if (!supabase) return { ok: false, error: "not-configured" };
+  const { error } = await supabase.auth.resetPasswordForEmail(email);
+  if (error) return { ok: false, error: error.message };
+  return { ok: true };
+}
+
+// Verifying the recovery code signs the user in (proves email ownership) —
+// updatePassword below then sets the new password on that session.
+export async function verifyPasswordResetCode(email, token) {
+  if (!supabase) return { ok: false, error: "not-configured" };
+  const { error } = await supabase.auth.verifyOtp({ email, token, type: "recovery" });
+  if (error) return { ok: false, error: error.message };
+  return { ok: true };
+}
+
+export async function updatePassword(newPassword) {
+  if (!supabase) return { ok: false, error: "not-configured" };
+  const { error } = await supabase.auth.updateUser({ password: newPassword });
+  if (error) return { ok: false, error: error.message };
+  return { ok: true };
 }

@@ -13,6 +13,7 @@ import { isSyncConfigured, pushBlob, pullBlob } from "./supabaseSync.js";
 import {
   getSession, onAuthStateChange, signUpWithPassword, signInWithPassword,
   sendLoginCode, verifyLoginCode, verifySignupCode, signOut as authSignOut,
+  sendPasswordResetCode, verifyPasswordResetCode, updatePassword,
 } from "./supabaseAuth.js";
 
 // Only ever set by the Docker build (see Dockerfile) — gates the
@@ -881,6 +882,10 @@ function AccountSection({ syncConfigured, session, syncState, lastSyncedAt, sync
   const [codeDraft, setCodeDraft] = useState("");
   const [codeSent, setCodeSent] = useState(false);
   const [signupPending, setSignupPending] = useState(false);
+  const [resetMode, setResetMode] = useState(false);
+  const [resetCodeSent, setResetCodeSent] = useState(false);
+  const [resetCodeDraft, setResetCodeDraft] = useState("");
+  const [newPassword, setNewPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState(null);
@@ -948,6 +953,41 @@ function AccountSection({ syncConfigured, session, syncState, lastSyncedAt, sync
     setConfirmSignOut(false);
   };
 
+  const cancelReset = () => {
+    setResetMode(false);
+    setResetCodeSent(false);
+    setResetCodeDraft("");
+    setNewPassword("");
+    setError(null);
+    setNotice(null);
+  };
+
+  const handleSendResetCode = async () => {
+    setBusy(true); setError(null); setNotice(null);
+    const res = await sendPasswordResetCode(email.trim());
+    setBusy(false);
+    if (!res.ok) { setError(res.error); return; }
+    setResetCodeSent(true);
+    setNotice("Code sent — check your email.");
+  };
+
+  // Verifying the code signs the user in with a recovery session, then this
+  // sets the new password on it — see sendPasswordResetCode's comment.
+  const handleResetPassword = async () => {
+    setBusy(true); setError(null);
+    const verifyRes = await verifyPasswordResetCode(email.trim(), resetCodeDraft.trim());
+    if (!verifyRes.ok) {
+      setBusy(false);
+      setError(verifyRes.error);
+      return;
+    }
+    const updateRes = await updatePassword(newPassword);
+    setBusy(false);
+    if (!updateRes.ok) { setError(updateRes.error); return; }
+    cancelReset();
+    setPassword("");
+  };
+
   const btnPrimary = "flex items-center gap-1.5 px-3.5 py-1.5 rounded-md text-[14px] font-medium transition-colors disabled:opacity-50";
   const btnPrimaryStyle = { background: t.ink, color: t.pageBg };
 
@@ -986,14 +1026,59 @@ function AccountSection({ syncConfigured, session, syncState, lastSyncedAt, sync
             )}
           </div>
         </div>
+      ) : resetMode ? (
+        <div className="space-y-3">
+          <p className="text-[13px]" style={{ color: t.ink }}>Reset password</p>
+          <div className="flex flex-wrap items-end gap-3">
+            <Field label="Email" className="w-64">
+              <TextInput type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" />
+            </Field>
+            {resetCodeSent && (
+              <>
+                <Field label="8-digit code" className="w-36">
+                  <TextInput value={resetCodeDraft} onChange={(e) => setResetCodeDraft(e.target.value)} placeholder="12345678" />
+                </Field>
+                <Field label="New password" className="w-64">
+                  <div className="relative">
+                    <TextInput type={showPassword ? "text" : "password"} value={newPassword} onChange={(e) => setNewPassword(e.target.value)} className="pr-8" />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((s) => !s)}
+                      className="absolute right-2 top-1/2 -translate-y-1/2"
+                      style={{ color: t.inkSoft }}
+                    >
+                      {showPassword ? <EyeOff size={14} /> : <Eye size={14} />}
+                    </button>
+                  </div>
+                </Field>
+              </>
+            )}
+          </div>
+          {!resetCodeSent ? (
+            <div className="flex flex-wrap items-center gap-4">
+              <button disabled={busy || !email} onClick={handleSendResetCode} className={btnPrimary} style={btnPrimaryStyle}>
+                Send reset code
+              </button>
+              <button onClick={cancelReset} className="text-[13px]" style={{ color: t.inkSoft }}>Cancel</button>
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-center gap-4">
+              <button disabled={busy || !resetCodeDraft || newPassword.length < 6} onClick={handleResetPassword} className={btnPrimary} style={btnPrimaryStyle}>
+                Reset password
+              </button>
+              <button onClick={handleSendResetCode} className="text-[13px]" style={{ color: t.inkSoft }}>Resend code</button>
+              <button onClick={cancelReset} className="text-[13px]" style={{ color: t.inkSoft }}>Cancel</button>
+            </div>
+          )}
+        </div>
       ) : signupPending ? (
         <div className="space-y-3">
           <p className="text-[13px]" style={{ color: t.ink }}>
             Confirming <span className="font-medium">{email}</span>
           </p>
           <div className="flex flex-wrap items-end gap-3">
-            <Field label="6-digit code" className="w-32">
-              <TextInput value={codeDraft} onChange={(e) => setCodeDraft(e.target.value)} placeholder="123456" />
+            <Field label="8-digit code" className="w-36">
+              <TextInput value={codeDraft} onChange={(e) => setCodeDraft(e.target.value)} placeholder="12345678" />
             </Field>
             <button disabled={busy || !codeDraft} onClick={handleVerifySignupCode} className={btnPrimary} style={btnPrimaryStyle}>
               Confirm
@@ -1046,6 +1131,9 @@ function AccountSection({ syncConfigured, session, syncState, lastSyncedAt, sync
               <button disabled={busy || !email || !password} onClick={handleSignUp} className="text-[13px] font-medium disabled:opacity-50" style={{ color: t.green }}>
                 Create account
               </button>
+              <button onClick={() => { setResetMode(true); setError(null); setNotice(null); }} className="text-[13px]" style={{ color: t.inkSoft }}>
+                Forgot password?
+              </button>
             </div>
           ) : !codeSent ? (
             <div className="flex flex-wrap items-center gap-4">
@@ -1055,8 +1143,8 @@ function AccountSection({ syncConfigured, session, syncState, lastSyncedAt, sync
             </div>
           ) : (
             <div className="flex flex-wrap items-end gap-3">
-              <Field label="6-digit code" className="w-32">
-                <TextInput value={codeDraft} onChange={(e) => setCodeDraft(e.target.value)} placeholder="123456" />
+              <Field label="8-digit code" className="w-36">
+                <TextInput value={codeDraft} onChange={(e) => setCodeDraft(e.target.value)} placeholder="12345678" />
               </Field>
               <button disabled={busy || !codeDraft} onClick={handleVerifyCode} className={btnPrimary} style={btnPrimaryStyle}>
                 Verify
