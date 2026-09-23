@@ -4,7 +4,7 @@ import {
   Plus, Trash2, ChevronDown, ChevronRight, PiggyBank, Wallet,
   AlertTriangle, Calendar, Settings2, Settings, Receipt, TrendingUp, Save, Check, X, RotateCcw, Sun, Moon,
   Download, Upload, FileSpreadsheet, Cloud, CloudOff, RefreshCw, Eye, EyeOff, Repeat, Bell,
-  Monitor, Laptop, Smartphone
+  Monitor, Laptop, Smartphone, Info
 } from "lucide-react";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine
@@ -20,6 +20,26 @@ import {
 // Docker-only Downloads tab so it never shows up in the Electron/Capacitor
 // builds, which don't have a downloads folder to serve.
 const IS_DOCKER_BUILD = import.meta.env.VITE_DEPLOYMENT_TARGET === "docker";
+
+// Baked in at build time from package.json — see vite.config.js.
+const APP_VERSION = typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : "0.0.0";
+
+// A public gist (not the private repo/package, which no unauthenticated
+// client — i.e. every build shipped to a user's machine — could read
+// without embedding a credential) holding {version, releaseUrl, dockerUrl},
+// updated by hand each release. Polled from Settings' About section only,
+// never on startup, so a stale/unreachable gist never blocks the app.
+const VERSION_MANIFEST_URL = "https://api.github.com/gists/9cf0e7fe79f47b0282c95fcd4a2ba0e5";
+
+function compareVersions(a, b) {
+  const pa = String(a).split(".").map(Number);
+  const pb = String(b).split(".").map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const diff = (pa[i] || 0) - (pb[i] || 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
 
 /* ============================================================================
    DATE UTILITIES — everything is stored/computed as UTC-midnight Date objects
@@ -1161,6 +1181,66 @@ function AccountSection({ syncConfigured, session, syncState, lastSyncedAt, sync
 }
 
 /* ============================================================================
+   ABOUT / VERSION CHECK
+============================================================================ */
+function AboutSection() {
+  const t = useTheme();
+  const card = "rounded-lg p-5 shadow-sm space-y-3";
+  const cardStyle = { background: t.cardBg, border: `1px solid ${t.ruleSoft}` };
+
+  const [checkState, setCheckState] = useState("idle"); // idle | checking | upToDate | updateAvailable | error
+  const [latest, setLatest] = useState(null);
+
+  const checkForUpdates = useCallback(async () => {
+    setCheckState("checking");
+    try {
+      const res = await fetch(VERSION_MANIFEST_URL);
+      if (!res.ok) throw new Error(`http-${res.status}`);
+      const gist = await res.json();
+      const manifest = JSON.parse(gist.files["version.json"].content);
+      setLatest(manifest);
+      setCheckState(compareVersions(manifest.version, APP_VERSION) > 0 ? "updateAvailable" : "upToDate");
+    } catch (e) {
+      setCheckState("error");
+    }
+  }, []);
+
+  useEffect(() => {
+    checkForUpdates();
+  }, [checkForUpdates]);
+
+  const updateUrl = latest && (IS_DOCKER_BUILD ? latest.dockerUrl : latest.releaseUrl);
+
+  return (
+    <section className={card} style={cardStyle}>
+      <h3 className="flex items-center gap-2 font-serif text-[17px]" style={{ color: t.ink }}><Info size={16} /> About</h3>
+      <p className="text-[13px]" style={{ color: t.ink }}>
+        Version {APP_VERSION}{IS_DOCKER_BUILD ? " (Docker)" : ""}
+      </p>
+      {checkState === "checking" && (
+        <p className="text-[12px]" style={{ color: t.inkSoft }}>Checking for updates…</p>
+      )}
+      {checkState === "upToDate" && (
+        <p className="text-[12px] flex items-center gap-1" style={{ color: t.green }}><Check size={12} /> You're up to date.</p>
+      )}
+      {checkState === "updateAvailable" && latest && (
+        <p className="text-[12px]" style={{ color: t.gold }}>
+          Update available: v{latest.version} — <a href={updateUrl} target="_blank" rel="noreferrer" className="underline font-medium">
+            {IS_DOCKER_BUILD ? "view the image on GHCR" : "download it"}
+          </a>
+        </p>
+      )}
+      {checkState === "error" && (
+        <div className="flex items-center gap-2 text-[12px]" style={{ color: t.inkSoft }}>
+          <span>Couldn't check for updates.</span>
+          <button onClick={checkForUpdates} className="underline font-medium" style={{ color: t.ink }}>Retry</button>
+        </div>
+      )}
+    </section>
+  );
+}
+
+/* ============================================================================
    BILL ROW EDITOR
 ============================================================================ */
 function BillEditor({ bill, savingsAccounts, categories, onChange, onDelete }) {
@@ -1975,6 +2055,8 @@ function SettingsTab({
           </div>
         )}
       </section>
+
+      <AboutSection />
     </div>
   );
 }
